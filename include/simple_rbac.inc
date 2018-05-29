@@ -98,12 +98,15 @@ native rbac_member_of(...);
 
 
 /**
-* Метод удаляет у игрока группу/привилегию по её id
-* @Param player_id;           - номер игрока на сервере
-* @Param group_id;            - уникальный номер группы/привилегииие
+* Метод изменяет связку пользователь-группа
+* @Param user_id;             - уникальный номер игрока
+* @Param group_name;          - название группы
+* @Param UserGroupStruct:key; - ключ
+* @Param any:value;           - значение
+* @OptParam [...];            - последовательность пар ключ-значение
 *
-* @usage rbac_usermod(player_id, group_id);
-* @usage rbac_usermod(1, 5);
+* @usage rbac_usermod(user_id, group_name, api_key, value[, api_key, value[...]);
+* @usage rbac_usermod(1, "VIP", ugs_expire, %timestamp%);
 */
 native rbac_usermod(...);
 
