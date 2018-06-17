@@ -8,6 +8,11 @@
     Описание:
         Плагин создан для расширенного разграничения пользователя по правам доступа, и реализует
     систему RBAC.
+     
+        Соглашения по данному плагину:
+     - В Базе Данных хранится информация только о членстве игроков в группах.
+     - Плагины же задают информацию о группах, реализуют их логику и т.п.
+    
     Плагин основывается на ядре авторизации по спецификации DEVCS-2102-31244 (https://dev-cs.ru/threads/2102/post-31244)
     и предоставляет базовые методы групповых политик для взаимодействия с привилегиями сервера и плагинов.
     
@@ -20,13 +25,15 @@
     
 ============================================================================================*/
 
+#pragma semicolon 1;
 
 #include <amxmodx>
 #include <auth_core>
-#include <simplerbac/database/mysql>
+#include <simple_rbac>
+#include <simple_rbac/database/mysql>
 
 /*================================= Информация о плагине ===================================*/
-#define PLUG_OBJNAME            "Simple Rbac"
+#define PLUG_OBJNAME            "Simple RBAC"
 #define PLUG_VERSION            "1.0.0"
 #define PLUG_CREATOR            "Boec[SpecOPs]"
 
@@ -39,13 +46,14 @@ new fwd_group_register,         // Форвард для регистрации 
     fwd_group_postinit,         // Форвард для пост-инициализации
     fwd_rbac_check,             // Форвард для перехвата выдачи привилегий
     fwd_rbac_grant,             // Форвард, констатирующий выдачу одной привилегии
-    fwd_rbac_complete           // Форвард, констатирующий окончание выдачи привилегий
+    fwd_rbac_complete;          // Форвард, констатирующий окончание выдачи привилегий
 
 
 /*================== Первичная инициализация и завершение работы плагина ===================*/
 
 public plugin_init() 
 {
+    register_plugin(PLUG_OBJNAME, PLUG_VERSION, PLUG_CREATOR);
     h_groups = ArrayCreate(GroupStruct);
     
     fwd_group_register = CreateMultiForward("rbac_groups_register", ET_CONTINUE);
@@ -132,7 +140,7 @@ user_set_privileges(player_id, Array:groups)
         
         promote_user(player_id, gid);
     }
-    
+    server_print("[S-RBAC] Privileges set. (Groups: %d)", ArraySize(groups));
     ExecuteForward(fwd_rbac_complete, res, player_id);
 }
 
@@ -141,7 +149,6 @@ user_drop_privileges(player_id)
 {
     ArrayClear(user_cache[player_id][pc_relation]);
     user_cache[player_id][pc_user_id] = 0;
-    user_cache[player_id][pc_active_group] = 0;
 }
 
 
@@ -238,9 +245,12 @@ public native__member_of(pluginID, args)
 {
     new pid = get_param_byref(1), gid = get_param_byref(2);
     new length = ArraySize(user_cache[pid][pc_relation]);
-    for(new i=0; i<length; i++) 
-        if(ArrayGetCell(user_cache[i][pc_relation], i) == gid)
+    
+    for(new i=0, ugid; i<length; i++) { 
+        ugid = ArrayGetCell(user_cache[pid][pc_relation], i);
+        if(ugid == gid)
             return true;
+    }
     
     return false; 
 }
@@ -259,7 +269,7 @@ public native__member_of(pluginID, args)
 */
 public native__usermod(pluginID, args)
 {
-    new relation[UserGroupStruct];
+    new relation[UserGroupStruct] = usergroup_proto;
     relation[ugs_user_id] = get_param_byref(1);
     get_string(2, relation[ugs_group_name], charsmax(relation[ugs_group_name]));
     
@@ -279,7 +289,7 @@ public native__usermod(pluginID, args)
 */
 public native__deluser(pluginID, args)
 {
-    new relation[UserGroupStruct];
+    new relation[UserGroupStruct] = usergroup_proto;
     relation[ugs_user_id] = get_param_byref(1);
     get_string(2, relation[ugs_group_name], charsmax(relation[ugs_group_name]));
     parse_native_arguments(args, UserGroupStruct, relation, 2);
@@ -338,10 +348,12 @@ promote_user(pid, gid)
     ExecuteForward(fwd_rbac_check, res, pid, gid);
         
     // Если пользователь может состоять в группе - добавляем привилегии
-    if(res) {
+    if(!res) {
+        new group[GroupStruct];
+        ArrayGetArray(h_groups, gid, group);
+        set_user_flags(pid, group[gs_flags] | get_user_flags(pid));
         ArrayPushCell(user_cache[pid][pc_relation], gid);
         ExecuteForward(fwd_rbac_grant, res, pid, gid);
-        server_print("[S-RBAC] Player set privileges! [%d::%d]", pid, gid);
     }
 }
 
@@ -355,7 +367,7 @@ group_find_byname(name[])
             return i;
         }
     }
-    return 0;
+    return -1;
 }
 
 // Метод проверяет уникальность группы
@@ -364,15 +376,18 @@ create_group_get_id(pluginID, group[GroupStruct])
 {
     new plg_name[32], gid;
     
-    gid = group_find_byname(group[gs_name])
+    gid = group_find_byname(group[gs_name]);
     
-    if(gid) {
-        get_plugin(.index = pluginID, .name = plg_name, .len2 = 31);
-        log_amx("[S-RBAC] Warning: Group collision! Plugin: %s", plg_name);
+    if(gid != -1) {
+        if(pluginID) {
+            get_plugin(.index = pluginID, .name = plg_name, .len2 = 31);
+            log_amx("[S-RBAC] Warning: Group alredy exists! Plugin: %s", plg_name);
+        }
         return gid;
     } else {
-        group[gs_group_id] = ArraySize(h_groups)-1;
-        return ArrayPushArray(h_groups, group)-1;
+        group[gs_group_id] = ArraySize(h_groups);
+        ArrayPushArray(h_groups, group)-1;
+        return group[gs_group_id];
     }
 }
 
@@ -395,6 +410,7 @@ parse_native_arguments(args, type, data[], param = 0)
                     case gs_name: get_string(++param, data[gs_name], charsmax(data[gs_name]));
                     case gs_alias: get_string(++param, data[gs_alias], charsmax(data[gs_alias]));
                     case gs_tag: get_string(++param, data[gs_tag], charsmax(data[gs_tag]));
+                    case gs_flags, gs_group_id: data[property] = get_param_byref(++param);
                 }
             }
             case UserGroupStruct: {
@@ -402,7 +418,6 @@ parse_native_arguments(args, type, data[], param = 0)
                     case UserGroupStruct: get_array(++param, data, UserGroupStruct);
                     case ugs_group_name: get_string(++param, data[ugs_group_name], charsmax(data[ugs_group_name]));
                     case ugs_user_id,
-                         ugs_is_active,
                          ugs_expires: data[property] = get_param_byref(++param);
                 }
             }
@@ -410,5 +425,15 @@ parse_native_arguments(args, type, data[], param = 0)
     } while (param <= args);
     
     return;
+}
+
+dump_group_struct(group[GroupStruct])
+{
+    server_print("========== UserStruct dump ============");
+    server_print("gID: %d", group[gs_group_id]);
+    server_print("name: %s", group[gs_name]);
+    server_print("alias: %s", group[gs_alias]);
+    server_print("tag: %s", group[gs_tag]);
+    server_print("flags: %d", group[gs_flags]);
 }
 

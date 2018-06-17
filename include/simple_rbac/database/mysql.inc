@@ -32,14 +32,13 @@ new const RBAC_USER_GROUP_CREATE[] =
     ( \
         user_id int unsigned not null, \
         group_name varchar(%d) not null, \
-        expires TIMESTAMP, \
-        active int(1) default 0, \
+        expires int unsigned default 0, \
         UNIQUE KEY (user_id, group_name) \
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8;";
     
 new const RBAC_REPLACE_USER_GROUP[] = "REPLACE INTO rbac_user_group \
-    (user_id, group_id, expires, active) VALUES (%s);";
-new const RBAC_SELECT_USER_GROUP[] = "SELECT * FROM rbac_user_group WHERE user_id=%d";
+    (user_id, group_name, expires) VALUES (%s);";
+new const RBAC_SELECT_USER_GROUP[] = "SELECT * FROM rbac_user_group WHERE user_id=%d AND (expires<%d OR expires=0)";
 new const RBAC_DELETE_USER_GROUP[] = "DELETE FROM rbac_user_group WHERE user_id=%d AND group_name='%s';";
 
 
@@ -59,7 +58,7 @@ storage_find_usergroups(player_id, user_id)
     thread[0] = player_id;
     thread[1] = user_id;
     
-    format(query, charsmax(query), query, user_id);
+    format(query, charsmax(query), query, user_id, get_systime());
     
     mysql_exec(query, "thread__find_usergroups", thread, 2);
 }
@@ -68,11 +67,13 @@ storage_find_usergroups(player_id, user_id)
 storage_replace_usergroup(relation[UserGroupStruct])
 {
     new query[SQL_QLIM]; query = RBAC_REPLACE_USER_GROUP;
-    new value[GROUPNAME_MAXLEN*2];
+    new value[SQL_QLIM];
     
     mysql_escape_string(value, charsmax(value), relation[ugs_group_name]);
     
-    format(query, charsmax(query), query, relation[ugs_user_id], value); 
+    format(value, charsmax(value), "%d, '%s', %d", relation[ugs_user_id], value, relation[ugs_expires]);
+    
+    format(query, charsmax(query), query, value); 
     mysql_exec(query, "mysql_query_handler");
 }
 
@@ -96,11 +97,12 @@ public thread__find_usergroups(failstate, Handle:query, error[], errnum, data[],
     new gid;
     while(SQL_MoreResults(query)) {
         parse_results(query, temp);
+        copy(group[gs_name], charsmax(group[gs_name]), temp[ugs_group_name]);
         gid = create_group_get_id(0, group);
         ArrayPushCell(groups, gid);
         SQL_NextRow(query);
     } 
-    user_set_privileges(player_id, groups)
+    user_set_privileges(player_id, groups);
 }
 
 // Метод, исполняющий запрос (поточный, последовательный - не важно)
@@ -139,7 +141,6 @@ parse_results(Handle:sql_results, data[UserGroupStruct]) {
     new parsed = 0;
     data[ugs_user_id] = SQL_ReadResult(sql_results, parsed++);
     SQL_ReadResult(sql_results, parsed++, data[ugs_group_name], charsmax(data[ugs_group_name]));
-    data[ugs_is_active] = SQL_ReadResult(sql_results, parsed++);
     data[ugs_expires] = SQL_ReadResult(sql_results, parsed++);
 }
 

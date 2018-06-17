@@ -32,14 +32,13 @@ enum _:GroupStruct {
 enum _:UserGroupStruct {
     ugs_user_id,                    // Номер пользователя
     ugs_group_name[GROUPNAME_MAXLEN], // Название группы
-    ugs_is_active,                  // Является ли эта группа основной для игрока?
     ugs_expires                     // До какого времени выдана группа
 }
+#define usergroup_proto {0, "DUMMY", 0}
 
 // Кеш игрока информации пользователя
 enum _:UserCache {
     pc_user_id,                     // Номер зарегистрированного пользователя   
-    pc_active_group,                // Номер активной группы игрока
     Array:pc_relation               // Массив с группами и привилегиями
 }
 
@@ -97,13 +96,17 @@ native rbac_group_set(...);
 native rbac_member_of(...);
 
 
+
 /**
-* Метод удаляет у игрока группу/привилегию по её id
-* @Param player_id;           - номер игрока на сервере
-* @Param group_id;            - уникальный номер группы/привилегииие
+* Метод изменяет связку пользователь-группа
+* @Param user_id;             - уникальный номер игрока
+* @Param group_name;          - название группы
+* @Param UserGroupStruct:key; - ключ
+* @Param any:value;           - значение
+* @OptParam [...];            - последовательность пар ключ-значение
 *
-* @usage rbac_usermod(player_id, group_id);
-* @usage rbac_usermod(1, 5);
+* @usage rbac_usermod(user_id, group_name, api_key, value[, api_key, value[...]);
+* @usage rbac_usermod(1, "VIP", ugs_expire, %timestamp%);
 */
 native rbac_usermod(...);
 
@@ -120,7 +123,7 @@ native rbac_deluser(...);
 
 
 /**
-* Метод даёт игроку группу/привилегию по её id
+* Метод даёт единоразово игроку группу/привилегию по её id (в БД не заносится)
 * @Param player_id;           - номер игрока на сервере
 * @Param group_id;            - уникальный номер группы/привилегииие
 *
@@ -130,14 +133,65 @@ native rbac_deluser(...);
 native rbac_promote(...);
 
 
+/**
+* Метод удаляет группу у игрока (без взаимодействия с БД)
+* @Param player_id;           - номер игрока на сервере
+* @Param group_id;            - уникальный номер группы/привилегииие
+*
+* @usage rbac_demote(player_id, group_id);
+* @usage rbac_demote(1, 5);
+*/
+native rbac_demote(...);
 
+stock parseTime(const value[]) {
+    new i, t, k;
+    while (value[i] != EOS) {
+        switch (value[i]) {
+            case '0'..'9': {
+                t = (t * 10) + (value[i] - '0');
+            }
+
+            case 'h': {
+                k += t * 60;
+                t = 0;
+            }
+
+            case 'd': {
+                k += t * 1440;
+                t = 0;
+            }
+
+            case 'w': {
+                k += t * 10080;
+                t = 0;
+            }
+
+            case 'm': {
+                k += t * 43200;
+                t = 0;
+            }
+
+            case 'y': {
+                k += t * 518400;
+                t = 0;
+            }
+
+            default: {
+                break;
+            }
+        }
+
+        i++;
+    }
+    return k + t;
+}
 
 stock group_equal(const data[GroupStruct], field, comparewith[GroupStruct] = group_proto)
 {
         switch(field)
         {
                 case gs_name, gs_alias, gs_tag:
-                        return (strcmp(data[field], comparewith[field])==0);
+                        return (equali(data[field], comparewith[field]));
                 case gs_group_id, group_equal:
                         return (data[field] == comparewith[field]);
                 
